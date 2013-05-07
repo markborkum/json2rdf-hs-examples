@@ -1,0 +1,215 @@
+#!json2rdf
+
+/**
+ * GET search | Twitter Search API
+ * @version  1.0.0
+ * @author   Mark Borkum <m.i.borkum@soton.ac.uk>
+ * @see      https://dev.twitter.com/docs/api/1/get/search
+ * @example  Search for status updates that contain the hashtag "#linkeddata".  
+ *   http://search.twitter.com/search.json?q=%23linkeddata&include_entities=true
+ */
+
+PREFIX awol:       <http://bblfish.net/work/atom-owl/2006-06-06/#>
+PREFIX dcterms:    <http://purl.org/dc/terms/>
+PREFIX foaf:       <http://xmlns.com/foaf/0.1/>
+PREFIX geonames:   <http://www.geonames.org/ontology#>
+PREFIX nasdaq:     <http://www.daml.org/2002/08/nasdaq/nasdaq-ont#>
+PREFIX owl:        <http://www.w3.org/2002/07/owl#>
+PREFIX rdf:        <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+PREFIX rdfs:       <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX sioc:       <http://rdfs.org/sioc/ns#>
+PREFIX sioc_types: <http://rdfs.org/sioc/types#>
+PREFIX wgs84_pos:  <http://www.w3.org/2003/01/geo/wgs84_pos#>
+PREFIX xsd:        <http://www.w3.org/2001/XMLSchema#>
+
+BIND twitter: <http://twitter.com/>
+
+FOREACH ${results} {
+  BIND status_update: <http://twitter.com/${from_user/downcase()}/statuses/${id}>
+  
+  IF ?status_update {
+    ?status_update
+      a sioc_types:MicroblogPost ;
+      dcterms:created ${created_at/strftime("%a, %_d %b %Y %H:%M:%S %Z", "%Y-%m-%dT%T%z")}^^xsd:dateTime ;
+      dcterms:hasFormat [
+        a awol:Content ;
+        awol:body ${encode()} ;
+        awol:length ${encode()/length()} ;
+        awol:type "application/json"
+      ] ;
+      dcterms:language ${iso_language_code}^^xsd:language ;
+      sioc:id ${id} .
+  
+    BIND from_user: <http://semantictweet.com/${from_user/downcase()}#me>
+    
+    IF ?from_user {
+      ?status_update
+        sioc:has_creator ?from_user .
+      
+      ?from_user
+        a sioc:UserAccount ;
+        foaf:accountName ${from_user} ;
+        foaf:accountServiceHomepage ?twitter ;
+        foaf:name ${from_user_name} ;
+        sioc:avatar <${profile_image_url}> ;
+        sioc:id ${from_user_id} .
+      
+      <${profile_image_url}>
+        a foaf:Image ;
+        = <${profile_image_url_https}> .
+      
+      BIND from_user_homepage: <http://twitter.com/${from_user/downcase()}>
+      
+      IF ?from_user_homepage {
+        ?from_user
+          foaf:homepage ?from_user_homepage .
+        
+        ?from_user_homepage
+          a foaf:Document ;
+          foaf:primaryTopic ?from_user .
+      }
+    }
+    
+    FOREACH ${entities/hashtags} {
+      BIND hashtag: <http://search.twitter.com/search?q=%23${text}>
+      
+      IF ?hashtag {
+        ?status_update 
+          sioc:has_container ?hashtag .
+
+        ?hashtag
+          a sioc:Container ;
+          rdfs:label ${text} .
+      }
+    }
+    
+    FOREACH ${entities/media} {
+      ?status_update
+        sioc:links_to <${url}> ;
+        sioc:topic <${media_url}> .
+
+      <${url}>
+        a foaf:Document ;
+        = <${expanded_url}> ;
+        foaf:primaryTopic <${media_url}> ;
+        sioc:id ${id} .
+
+      <${expanded_url}>
+        rdfs:label ${display_url} .
+
+      <${media_url}>
+        a foaf:Image ;
+        = <${media_url_https}> .
+    }
+    
+    FOREACH ${entities/urls} {
+      ?status_update 
+        sioc:links_to <${url}> .
+    
+      <${url}>
+        = <${expanded_url}> .
+
+      <${expanded_url}>
+        rdfs:label ${display_url} .
+    }
+    
+    FOREACH ${entities/user_mentions} {
+      BIND to_user: <http://semantictweet.com/${screen_name/downcase()}#me>
+      
+      IF ?to_user {
+        ?status_update 
+          sioc:addressed_to ?to_user .
+
+        ?to_user
+          a sioc:UserAccount ;
+          foaf:accountName ${screen_name} ;
+          foaf:accountServiceHomepage ?twitter ;
+          foaf:name ${name} ;
+          sioc:id ${id} .
+          
+        BIND to_user_homepage: <http://twitter.com/${screen_name/downcase()}>
+        
+        IF ?to_user_homepage {
+          ?to_user
+            foaf:homepage ?to_user_homepage .
+
+          ?to_user_homepage
+            a foaf:Document ;
+            foaf:primaryTopic ?to_user .
+        }
+      }
+    }
+
+    IF ${geo} {
+      BIND feature: <geo:${geo/coordinates/0},${geo/coordinates/1}>
+      
+      IF ?feature {
+        ?status_update 
+          sioc:topic ?feature .
+
+        ?feature
+          a geonames:Feature ;
+          wgs84_pos:lat ${geo/coordinates/0} ;
+          wgs84_pos:lat_long "${geo/coordinates/0},${geo/coordinates/1}" ;
+          wgs84_pos:long ${geo/coordinates/1} .
+      }
+    }
+
+    MATCH "&lt;a[[:space:]]{1,}href=&quot;(.*)&quot;([[:space:]]{1,}rel=&quot;nofollow&quot;){0,1}&gt;(.*)&lt;/a&gt;" IN ${source} {
+      ?status_update
+        foaf:maker <${1}> .
+  
+      <${1}>
+        rdfs:label ${3} .
+    }
+
+    IF ${text} {
+      ?status_update
+        sioc:content [
+          a awol:Content ;
+          awol:body ${text}@${iso_language_code} ;
+          awol:lang ${iso_language_code}^^xsd:language ;
+          awol:length ${text/length()} ;
+          awol:type "text/plain"
+        ] .
+
+      MATCH "\$(([a-zA-Z]{1,})([\.\-][a-zA-Z]{1,})*)" IN ${text} {
+        BIND nasdaq_symbol: <http://www.nasdaq.com/symbol/${1/downcase()}>
+      
+        ?status_update 
+          sioc:topic ?nasdaq_symbol .
+
+        ?nasdaq_symbol
+          a nasdaq:Symbol ;
+          nasdaq:symbol ${1/upcase()} .
+      }
+    }
+
+    IF ${to_user} {
+      BIND to_user: <http://semantictweet.com/${to_user/downcase()}#me>
+      
+      IF ?to_user {
+        ?status_update 
+          sioc:addressed_to ?to_user .
+
+        ?to_user
+          a sioc:UserAccount ;
+          foaf:accountName ${to_user} ;
+          foaf:accountServiceHomepage ?twitter ;
+          foaf:name ${to_user_name} ;
+          sioc:id ${to_user_id} .
+
+        BIND to_user_homepage: <http://twitter.com/${to_user/downcase()}>
+        
+        IF ?to_user_homepage {
+          ?to_user
+            foaf:homepage ?to_user_homepage .
+
+          ?to_user_homepage
+            a foaf:Document ;
+            foaf:primaryTopic ?to_user .
+        }
+      }
+    }
+  }
+}
